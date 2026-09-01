@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Django Gmail Reference</title>
+<style>body{font:16px system-ui;max-width:960px;margin:40px auto;padding:0 20px;color:#202124}nav{display:flex;justify-content:space-between}button,.button{background:#1a73e8;color:white;border:0;border-radius:4px;padding:10px 14px;text-decoration:none;cursor:pointer}.danger{background:#b3261e}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:10px;border-bottom:1px solid #ddd}.notice{padding:12px;background:#eef3fd;margin:12px 0}.error{color:#b3261e}form{display:inline}code{background:#f3f3f3;padding:2px 5px}</style></head>
+<body><nav><strong>Django Gmail Reference</strong>{% if user.is_authenticated %}<form method="post" action="{% url 'logout' %}">{% csrf_token %}<button>Log out</button></form>{% endif %}</nav>
+{% for message in messages %}<div class="notice">{{ message }}</div>{% endfor %}{% block content %}{% endblock %}</body></html>
+

@@ -1,0 +1,15 @@
+{% extends "base.html" %}{% block content %}
+<h1>Gmail integration</h1>
+{% if mailbox %}
+<p>Connected as <strong>{{ mailbox.email }}</strong> · <span id="status">{{ mailbox.get_status_display }}</span></p>
+{% if mailbox.sync_error %}<p class="error">{{ mailbox.sync_error }}</p>{% endif %}
+<p id="progress">{% if sync_run %}{{ sync_run.created_count }} created, {{ sync_run.updated_count }} updated, {{ sync_run.deleted_count }} deleted{% endif %}</p>
+<form method="post" action="{% url 'gmail:sync' %}">{% csrf_token %}<button>Sync now</button></form>
+<form method="post" action="{% url 'gmail:disconnect' %}">{% csrf_token %}<button class="danger">Delete local connection</button></form>
+<h2>Recent messages</h2><table><thead><tr><th>Date</th><th>From</th><th>Subject</th></tr></thead><tbody>
+{% for message in recent_messages %}<tr><td>{{ message.internal_date|date:"Y-m-d H:i" }}</td><td>{{ message.sender }}</td><td>{{ message.subject|default:"(no subject)" }}</td></tr>{% empty %}<tr><td colspan="3">No messages imported yet.</td></tr>{% endfor %}
+</tbody></table>
+<script>const endpoint="{% url 'gmail:status' %}";async function poll(){const r=await fetch(endpoint),s=await r.json();document.querySelector("#status").textContent=s.status;if(s.run)document.querySelector("#progress").textContent=`${s.run.created} created, ${s.run.updated} updated, ${s.run.deleted} deleted (${s.run.processed}/${s.run.discovered} processed)`;if(s.status==="syncing")setTimeout(poll,1500)}poll();</script>
+{% else %}<p>No Gmail account is connected.</p><a class="button" href="{% url 'gmail:connect' %}">Connect Gmail</a>{% endif %}
+{% endblock %}
+
