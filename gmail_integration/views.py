@@ -50,6 +50,12 @@ def connect(request):
         messages.error(request, "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET first.")
         return redirect("gmail:dashboard")
     flow = _flow(request)
+    # Google only issues a refresh token when the consent screen is shown, so
+    # connect and reconnect always force it.
+    # With django-allauth: SOCIALACCOUNT_PROVIDERS["google"]["AUTH_PARAMS"] =
+    # {"access_type": "offline"}, and add prompt=consent on the connect link only
+    # (not plain "Sign in with Google", or every login shows the consent screen):
+    #   {% provider_login_url "google" process="connect" auth_params="prompt=consent" %}
     authorization_url, state = flow.authorization_url(
         access_type="offline", include_granted_scopes="true", prompt="consent"
     )
@@ -89,6 +95,10 @@ def callback(request):
         .values_list("encrypted_refresh_token", flat=True)
         .first()
     )
+    # Google omits the refresh token when consent was skipped; keep the one we
+    # have rather than overwriting it with nothing.
+    # With django-allauth this is built in: SocialLogin._store_token only replaces
+    # SocialToken.token_secret (the refresh token) when a new one arrives.
     if credentials.refresh_token:
         encrypted_token = encrypt(credentials.refresh_token)
     elif existing_token:
@@ -106,6 +116,7 @@ def callback(request):
             "scopes": list(credentials.scopes or [GMAIL_SCOPE]),
             "status": GmailMailbox.Status.CONNECTED,
             "sync_error": "",
+            "sync_started_at": None,
         },
     )
     sync_gmail_mailbox.delay(mailbox.pk)
@@ -118,7 +129,9 @@ def sync(request):
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
     mailbox = GmailMailbox.objects.filter(user=request.user).first()
-    if mailbox:
+    if mailbox and mailbox.status == GmailMailbox.Status.NEEDS_RECONNECT:
+        messages.error(request, "Reconnect Gmail before syncing.")
+    elif mailbox:
         sync_gmail_mailbox.delay(mailbox.pk)
     return redirect("gmail:dashboard")
 

@@ -12,6 +12,7 @@ This is deliberately a reference, not a reusable package. Copy the architecture 
 - resumable, page-at-a-time initial imports through Celery
 - incremental synchronization through `users.history.list`
 - expired history cursor recovery (HTTP 404 triggers a new full import)
+- revoked-access recovery: a rejected refresh token stops syncing and asks the user to reconnect
 - task leases, stale-worker recovery, durable sync-run counters, and status polling
 - deletion of local connection data
 
@@ -83,6 +84,31 @@ Production HTTPS, proxy headers, hosts, cookies, database, Redis, secret managem
 `GmailMailbox.user` is one-to-one because this demo permits one Gmail account per user. A multi-account product should use a foreign key and a provider-account uniqueness constraint.
 
 The full import saves `nextPageToken` before scheduling its continuation. Each message is upserted, so replaying a page is safe. Incremental sync stores Gmail's newest `historyId`; additions and label changes are refetched, while deletions remove the local row. Gmail can expire history IDs, so a 404 resets the cursor and starts a full import.
+
+### Recovering from revoked or missing refresh tokens
+
+Google only issues a refresh token when the consent screen is shown, and it can invalidate one at any time (the user removes access, changes their password, or the app is in Testing and the token is older than 7 days). None of this can be repaired server side; the user has to consent again. The reference therefore:
+
+1. Always sends `prompt=consent` on connect, so a refresh token is issued.
+2. Keeps the stored refresh token when Google does not return a new one.
+3. Treats `invalid_grant`, HTTP 401, and insufficient-scope 403s as `ReconnectRequired`. Rate limits, 5xx responses, and retryable refresh failures still raise and retry.
+4. On `ReconnectRequired`, discards the dead token, sets the mailbox to `needs_reconnect`, clears `next_sync_at` so Celery beat stops retrying, and keeps `history_id` so reconnecting resumes incremental sync.
+5. Shows a **Reconnect Gmail** button and refuses manual syncs until the user reconnects.
+
+#### Using django-allauth instead
+
+If Google sign-in already goes through django-allauth, you don't need the custom OAuth views; apply the same recovery to `SocialToken`:
+
+| This reference | django-allauth |
+| --- | --- |
+| `prompt="consent"` in `views.connect` | `{% provider_login_url "google" process="connect" auth_params="prompt=consent" %}` on connect/reconnect links only; keep `AUTH_PARAMS = {"access_type": "offline"}` in settings |
+| Preserve the refresh token in `views.callback` | Built in: allauth only overwrites `SocialToken.token_secret` when Google sends a new refresh token |
+| `GmailMailbox.encrypted_refresh_token` | `SocialToken.token_secret` (plain text; encrypt if required) |
+| `Status.NEEDS_RECONNECT` | An empty `SocialToken.token_secret` |
+| `credentials_for` + refresh | Build `Credentials` from the token (including `expiry=token.expires_at` as naive UTC) and refresh only when `credentials.valid` is false; save the new access token and `expires_at` |
+| `mark_needs_reconnect` | `token.token_secret = ""`, then render a Reconnect link instead of an empty page |
+
+Install allauth with the `socialaccount` extra (`django-allauth[socialaccount]`). Since allauth 65, PyJWT is optional, and without it the Google callback fails with `ModuleNotFoundError: No module named 'jwt'` after the user consents.
 
 The body parser intentionally stores inline text/plain and text/html parts but skips attachments. Treat HTML as untrusted if you render it. Real products should also define retention, redaction, attachment, search, revocation, and account-deletion policies.
 

@@ -4,6 +4,7 @@ from datetime import UTC, timedelta
 from django.conf import settings
 from django.db import models, transaction
 from django.utils import timezone
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -15,7 +16,48 @@ from .models import GmailMailbox, GmailMessage, GmailSyncRun
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 
 
+# Reconnect recovery
+# ------------------
+# With django-allauth the same pattern applies to SocialToken:
+#   - the refresh token lives in SocialToken.token_secret (encrypt it at rest if
+#     your threat model requires; allauth stores it in plain text);
+#   - "needs reconnect" is simply an empty token_secret, so there is no extra
+#     status field to keep in sync;
+#   - build Credentials from token.token / token.token_secret / token.expires_at
+#     and token.app.client_id / token.app.secret, and refresh only when
+#     credentials.valid is False, saving the new token and expires_at back;
+#   - on a reconnect error, set token.token_secret = "" and render a
+#     "Reconnect Google" link (prompt=consent) instead of an empty page.
+
+
+class ReconnectRequired(Exception):
+    """Google will not accept the stored grant; only the user can fix it by consenting again.
+
+    Retrying cannot help, so callers must stop scheduling work for the mailbox.
+    """
+
+
+def is_reconnect_error(exc):
+    """A rejected token or missing scope, as opposed to transient failures or rate limits."""
+    if isinstance(exc, RefreshError):
+        # invalid_grant (revoked, expired, password change) is not retryable;
+        # a Google outage during refresh is.
+        return not exc.retryable
+    if isinstance(exc, HttpError):
+        if exc.resp.status == 401:
+            return True
+        if exc.resp.status == 403:
+            reasons = {detail.get("reason") for detail in exc.error_details or []}
+            return "insufficientPermissions" in reasons or (
+                "insufficient authentication scopes" in str(exc.reason).lower()
+            )
+    return False
+
+
 def credentials_for(mailbox):
+    # With django-allauth: `if not token.token_secret: raise ReconnectRequired(...)`.
+    if not mailbox.encrypted_refresh_token:
+        raise ReconnectRequired("No refresh token is stored for this mailbox.")
     return Credentials(
         token=None,
         refresh_token=decrypt(mailbox.encrypted_refresh_token),
@@ -213,6 +255,9 @@ def sync_mailbox(mailbox_id, run_id, *, resume=False):
         return True
     except Exception as exc:
         now = timezone.now()
+        if isinstance(exc, ReconnectRequired) or is_reconnect_error(exc):
+            mark_needs_reconnect(mailbox_id, run.pk, exc)
+            return False
         GmailMailbox.objects.filter(pk=mailbox_id).update(
             status=GmailMailbox.Status.ERROR,
             sync_error=str(exc)[:2000],
@@ -224,3 +269,27 @@ def sync_mailbox(mailbox_id, run_id, *, resume=False):
             status=GmailSyncRun.Status.FAILED, error=str(exc)[:2000], finished_at=now
         )
         raise
+
+
+def mark_needs_reconnect(mailbox_id, run_id, exc):
+    """Stop syncing a mailbox whose grant Google rejected and ask the user to reconnect.
+
+    The dead refresh token is discarded, and next_sync_at is cleared so the beat
+    schedule stops retrying a request that can never succeed. history_id is kept,
+    so reconnecting resumes incremental sync instead of re-importing.
+    """
+    # With django-allauth: token.token_secret = ""; token.save(update_fields=["token_secret"]).
+    # allauth's reconnect (process="connect") updates the same SocialToken in place.
+    now = timezone.now()
+    message = "Google access was revoked or expired. Reconnect Gmail to resume syncing."
+    GmailMailbox.objects.filter(pk=mailbox_id).update(
+        status=GmailMailbox.Status.NEEDS_RECONNECT,
+        encrypted_refresh_token="",
+        sync_error=message,
+        sync_started_at=None,
+        next_sync_at=None,
+        updated_at=now,
+    )
+    GmailSyncRun.objects.filter(pk=run_id).update(
+        status=GmailSyncRun.Status.FAILED, error=f"{message} ({exc})"[:2000], finished_at=now
+    )
