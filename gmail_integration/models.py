@@ -7,12 +7,15 @@ class GmailMailbox(models.Model):
         CONNECTED = "connected", "Connected"
         SYNCING = "syncing", "Syncing"
         ERROR = "error", "Error"
+        # Google rejected the stored grant (revoked, expired, or missing scopes).
+        # Only the user can fix this, so syncing stops until they reconnect.
+        NEEDS_RECONNECT = "needs_reconnect", "Needs reconnect"
 
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="gmail_mailbox"
     )
     email = models.EmailField()
-    encrypted_refresh_token = models.TextField()
+    encrypted_refresh_token = models.TextField(blank=True)
     scopes = models.JSONField(default=list)
     history_id = models.CharField(max_length=64, blank=True)
     full_sync_page_token = models.CharField(max_length=512, blank=True)

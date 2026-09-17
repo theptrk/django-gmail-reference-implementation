@@ -3,6 +3,8 @@
 {% if mailbox %}
 <p>Connected as <strong>{{ mailbox.email }}</strong> · <span id="status">{{ mailbox.get_status_display }}</span></p>
 {% if mailbox.sync_error %}<p class="error">{{ mailbox.sync_error }}</p>{% endif %}
+{# With django-allauth: {% load socialaccount %}<a href="{% provider_login_url 'google' process='connect' auth_params='prompt=consent' next=request.path %}">Reconnect Google</a> #}
+{% if mailbox.status == "needs_reconnect" %}<a class="button" href="{% url 'gmail:connect' %}">Reconnect Gmail</a>{% endif %}
 <p id="progress">{% if sync_run %}{{ sync_run.created_count }} created, {{ sync_run.updated_count }} updated, {{ sync_run.deleted_count }} deleted{% endif %}</p>
 <form method="post" action="{% url 'gmail:sync' %}">{% csrf_token %}<button>Sync now</button></form>
 <form method="post" action="{% url 'gmail:disconnect' %}">{% csrf_token %}<button class="danger">Delete local connection</button></form>
