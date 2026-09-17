@@ -37,12 +37,20 @@ class ReconnectRequired(Exception):
     """
 
 
+def refresh_error_code(exc):
+    """The OAuth error code (e.g. "invalid_grant") google-auth attaches to RefreshError."""
+    response = exc.args[1] if len(exc.args) > 1 else None
+    return response.get("error") if isinstance(response, dict) else None
+
+
 def is_reconnect_error(exc):
     """A rejected token or missing scope, as opposed to transient failures or rate limits."""
     if isinstance(exc, RefreshError):
-        # invalid_grant (revoked, expired, password change) is not retryable;
-        # a Google outage during refresh is.
-        return not exc.retryable
+        # Only invalid_grant (revoked, expired, password change) means the user's
+        # grant is dead. Other non-retryable errors, such as invalid_client from a
+        # wrong client secret, are app misconfiguration: discarding tokens then
+        # would force every user to reconnect.
+        return refresh_error_code(exc) == "invalid_grant"
     if isinstance(exc, HttpError):
         if exc.resp.status == 401:
             return True

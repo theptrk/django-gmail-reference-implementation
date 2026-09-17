@@ -91,7 +91,7 @@ Google only issues a refresh token when the consent screen is shown, and it can 
 
 1. Always sends `prompt=consent` on connect, so a refresh token is issued.
 2. Keeps the stored refresh token when Google does not return a new one.
-3. Treats `invalid_grant`, HTTP 401, and insufficient-scope 403s as `ReconnectRequired`. Rate limits, 5xx responses, and retryable refresh failures still raise and retry.
+3. Treats `invalid_grant`, HTTP 401, and insufficient-scope 403s as `ReconnectRequired`. Rate limits, 5xx responses, retryable refresh failures, and app misconfiguration such as `invalid_client` (a wrong client secret) still raise and retry, and never discard tokens.
 4. On `ReconnectRequired`, discards the dead token, sets the mailbox to `needs_reconnect`, clears `next_sync_at` so Celery beat stops retrying, and keeps `history_id` so reconnecting resumes incremental sync.
 5. Shows a **Reconnect Gmail** button and refuses manual syncs until the user reconnects.
 

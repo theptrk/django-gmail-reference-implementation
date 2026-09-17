@@ -27,6 +27,11 @@ def mailbox(db, settings):
     )
 
 
+def _refresh_error(code, retryable=False):
+    # Shape google-auth raises: (details, response_data).
+    return RefreshError(f"{code}: details", {"error": code}, retryable=retryable)
+
+
 def _run(mailbox):
     return GmailSyncRun.objects.create(mailbox=mailbox, status=GmailSyncRun.Status.RUNNING)
 
@@ -41,7 +46,7 @@ def _http_error(status, reason, detail_reason=None):
 
 def test_revoked_refresh_token_stops_syncing_and_asks_to_reconnect(mailbox):
     run = _run(mailbox)
-    refresh = Mock(side_effect=RefreshError("invalid_grant: Token has been expired or revoked."))
+    refresh = Mock(side_effect=_refresh_error("invalid_grant"))
     with patch("gmail_integration.services.Credentials.refresh", refresh):
         assert sync_mailbox(mailbox.pk, run.pk) is False
 
@@ -52,6 +57,19 @@ def test_revoked_refresh_token_stops_syncing_and_asks_to_reconnect(mailbox):
     assert mailbox.next_sync_at is None  # the beat schedule no longer picks it up
     assert mailbox.history_id == "42"  # reconnecting resumes incremental sync
     assert run.status == GmailSyncRun.Status.FAILED
+
+
+def test_misconfigured_client_keeps_token_and_retries(mailbox):
+    run = _run(mailbox)
+    refresh = Mock(side_effect=_refresh_error("invalid_client"))
+    with (
+        patch("gmail_integration.services.Credentials.refresh", refresh),
+        pytest.raises(RefreshError),
+    ):
+        sync_mailbox(mailbox.pk, run.pk)
+    mailbox.refresh_from_db()
+    assert mailbox.status == GmailMailbox.Status.ERROR
+    assert mailbox.encrypted_refresh_token != ""
 
 
 def test_mailbox_without_refresh_token_needs_reconnect(mailbox):
@@ -77,8 +95,10 @@ def test_transient_errors_still_raise_for_retry(mailbox):
 
 
 def test_reconnect_errors_are_distinguished_from_transient_ones():
-    assert is_reconnect_error(RefreshError("invalid_grant"))
-    assert not is_reconnect_error(RefreshError("temporarily unavailable", retryable=True))
+    assert is_reconnect_error(_refresh_error("invalid_grant"))
+    assert not is_reconnect_error(_refresh_error("temporarily_unavailable", retryable=True))
+    # A wrong client secret is app misconfiguration, not the user's grant dying.
+    assert not is_reconnect_error(_refresh_error("invalid_client"))
     assert is_reconnect_error(_http_error(401, "Invalid Credentials"))
     assert is_reconnect_error(
         _http_error(403, "Insufficient Permission", "insufficientPermissions")
