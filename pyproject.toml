@@ -15,6 +15,9 @@ dependencies = [
   "google-auth-oauthlib>=1.2,<2",
 ]
 
+[project.optional-dependencies]
+allauth = ["django-allauth[socialaccount]>=65.19,<66"]
+
 [dependency-groups]
 dev = [
   "pytest>=8,<10",

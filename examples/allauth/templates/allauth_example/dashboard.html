@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% load socialaccount %}
+{% block content %}
+<h1>django-allauth adaptation</h1>
+<p>This example demonstrates the account UI and OAuth boundary. It does not import or sync mail.</p>
+{% if not google_configured %}
+  <div class="notice">Google is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, then restart the server.</div>
+{% elif google_account %}
+  <p>Google identity linked.</p>
+  {% if has_refresh_token %}
+    <p>Offline Google credentials are stored. A refresh token alone does not prove Gmail permission was granted.</p>
+  {% else %}
+    <p>Offline access is missing or was revoked. Reconnect Gmail before starting a sync.</p>
+  {% endif %}
+  <a class="button" href="{% provider_login_url 'google' process='connect' scope=gmail_scope auth_params='prompt=consent' %}">Reconnect Gmail</a>
+{% else %}
+  <a class="button" href="{% provider_login_url 'google' process='connect' scope=gmail_scope auth_params='prompt=consent' %}">Connect Gmail</a>
+{% endif %}
+<p><a href="{% url 'socialaccount_connections' %}">Manage account connections</a></p>
+<p>Removing a connection deletes its local allauth credentials. It does not revoke access at Google or delete imported Gmail data.</p>
+{% endblock %}

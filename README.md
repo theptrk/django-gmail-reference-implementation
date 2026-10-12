@@ -97,6 +97,18 @@ Google only issues a refresh token when the consent screen is shown, and it can 
 
 #### Using django-allauth instead
 
+For a runnable account UI example, see [the allauth adaptation](examples/allauth/README.md).
+It includes the shared layout override, separate sign-in and Gmail consent scopes,
+connect/reconnect links, local disconnect behavior, missing-credentials guidance,
+and regression tests. It uses a separate local database and does not import mail.
+
+Styling only `account/login.html` and `account/signup.html` is incomplete: current
+allauth connections, confirmation, and error pages inherit
+`allauth/layouts/base.html`. Bridge that shared layout to your application's base
+template so every built-in account page loads your styles. Google OAuth credentials
+and template styling are separate requirements; missing credentials must not make
+the page lose its styling.
+
 If Google sign-in already goes through django-allauth, you don't need the custom OAuth views; apply the same recovery to `SocialToken`:
 
 | This reference | django-allauth |
